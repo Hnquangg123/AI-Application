@@ -1,0 +1,20 @@
+openai>=1.40.0
+fastapi>=0.112.0
+uvicorn>=0.30.0
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+python-dotenv>=1.0.1
+langgraph>=1.0.0
+pytest>=8.3.0
+sqlalchemy>=2.0.36
+alembic>=1.14.0
+psycopg[binary]>=3.2.3
+pgvector>=0.3.6
+sentence-transformers>=3.3.0
+
+# Workshop 3 - local Text-to-Speech (Microsoft SpeechT5 via transformers). CPU-friendly.
+transformers>=4.40.0
+torch
+soundfile>=0.12.1
+sentencepiece
+librosa

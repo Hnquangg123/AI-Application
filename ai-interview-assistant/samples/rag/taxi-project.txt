@@ -1,0 +1,164 @@
+Project name: RideFlow Taxi Platform
+
+Project description:
+RideFlow is a mobile taxi booking platform for passengers and drivers. Passengers can search for nearby drivers, request rides, follow the driver's location, and pay for completed trips. Drivers can receive ride offers, accept or reject them, navigate to pickup points, and update the trip lifecycle. The Android application is built with Kotlin, Clean Architecture, MVVM, Jetpack Compose, Coroutines, Flow, and a repository-based data layer.
+
+Business requirements:
+- A passenger can sign in, set pickup and destination locations, and request a ride.
+- The application must validate pickup and destination coordinates before creating a ride request.
+- A passenger must see an estimated fare, distance, and arrival time before confirming a ride.
+- A driver can go online or offline and receive ride offers only while online and eligible.
+- A ride must have one valid lifecycle: requested, searching, driver_assigned, driver_arriving, driver_waiting, in_progress, completed, cancelled, or failed.
+- The platform must prevent two drivers from accepting the same ride.
+- Passenger and driver locations must update while a ride is active.
+- The passenger must be able to cancel according to the cancellation policy.
+- The passenger can pay by card, wallet, or cash where supported by the market.
+- The app should remain useful during temporary network loss by showing cached trip data and retrying safe operations.
+- Important ride, payment, and cancellation events must be auditable.
+
+Architecture overview:
+The Android application is organized using Clean Architecture with presentation, domain, and data layers. Jetpack Compose renders immutable UI state. ViewModels expose StateFlow to composables and receive user actions through intent-like functions. Use cases contain business rules and are independent of Android framework classes. Repositories define domain-facing contracts and coordinate remote and local data sources.
+
+The Android client communicates with an API through an authenticated HTTP client. A WebSocket or realtime channel delivers ride offers, driver assignment changes, trip status updates, and location events. Room stores the passenger's active trip, recent trips, cached driver details, and pending retryable operations. The backend remains the source of truth for ride assignment, fare calculation, and payment authorization.
+
+Clean Architecture layers:
+1. Presentation layer
+   Composable screens display state from ViewModels and emit user actions. ViewModels use StateFlow, handle loading and error states, collect use case results, and preserve state across configuration changes. UI models are separate from domain models so presentation concerns do not leak into business logic.
+
+2. Domain layer
+   Use cases represent application actions such as SearchFareEstimate, RequestRide, ObserveActiveRide, AcceptRideOffer, UpdateDriverAvailability, CancelRide, CompleteRide, and RetryPendingOperation. Domain entities include Ride, Driver, Location, FareEstimate, PaymentMethod, and RideStatus. Repository interfaces are defined here and contain no Retrofit, Room, Android Context, or Compose dependencies.
+
+3. Data layer
+   Repository implementations combine remote and local data sources. Retrofit services handle REST APIs, a WebSocket client handles realtime updates, Room provides local persistence, and DataStore stores user preferences such as selected payment method and driver availability. DTOs and database entities are mapped into domain models at the data boundary.
+
+4. Infrastructure and platform
+   Hilt provides dependency injection. WorkManager retries deferred operations and refreshes active trip data when connectivity returns. Fused Location Provider supplies driver location updates with explicit runtime permission handling. The Maps SDK renders maps and routes behind a small platform-facing abstraction.
+
+Presentation and MVVM flow:
+1. A composable sends an event such as OnConfirmRide or OnCancelRide to its ViewModel.
+2. The ViewModel validates basic input and invokes the appropriate domain use case.
+3. The use case applies business rules and calls a repository interface.
+4. The repository reads or writes remote and local data through its data sources.
+5. The result is mapped into a domain result and returned to the ViewModel.
+6. The ViewModel updates an immutable screen state exposed through StateFlow.
+7. Compose collects the state with lifecycle awareness and renders the current screen.
+8. One-time effects such as navigation, snackbars, and payment redirects are emitted through a separate effect flow.
+
+Main screens:
+1. Authentication
+   Sign-in, sign-up, phone verification, and session restoration. Tokens are stored using an encrypted storage mechanism and are refreshed without exposing credentials to the UI layer.
+
+2. Passenger home
+   Shows the map, current location, pickup selector, destination search, saved places, and the action to request a fare estimate.
+
+3. Fare estimate
+   Shows route distance, estimated duration, fare range, available vehicle categories, payment method, and confirmation action.
+
+4. Ride matching
+   Shows the searching state, cancellation policy, retry state, and the realtime transition when a driver is assigned.
+
+5. Active passenger trip
+   Shows the driver's name, vehicle, license plate, driver rating, live location, route, ETA, contact options, safety actions, and cancellation action.
+
+6. Driver dashboard
+   Shows online or offline status, current location, today's earnings, active ride, and ride offers.
+
+7. Driver ride offer
+   Shows pickup distance, destination area, estimated fare, acceptance countdown, and accept or reject actions.
+
+8. Driver active trip
+   Guides the driver through arriving, waiting, starting, and completing the ride. Each transition is validated by the backend and reflected in the local state.
+
+9. Trip history and receipt
+   Shows completed and cancelled rides, fare breakdown, payment status, route summary, rating, and support options.
+
+Ride creation sequence:
+1. Passenger grants location permission or selects a pickup location manually.
+2. The passenger selects a destination and the app validates that pickup and destination are different and within the service area.
+3. The app invokes GetFareEstimate with pickup, destination, vehicle category, and payment method.
+4. The backend validates the route, calculates the estimate, and returns a short-lived estimate ID.
+5. The passenger confirms the estimate.
+6. The app invokes RequestRide with the estimate ID and a client request ID for idempotency.
+7. The backend creates the ride in requested status and begins driver matching.
+8. The realtime channel publishes ride status and driver assignment events.
+9. The passenger app stores each accepted event locally and updates the active trip screen.
+10. When the ride is completed, the backend calculates the final fare and starts payment processing.
+11. The app displays the receipt after payment status is confirmed.
+
+Driver acceptance sequence:
+1. The driver switches availability to online.
+2. The backend verifies driver identity, vehicle status, location permission, and eligibility.
+3. The matching service sends a ride offer to eligible drivers.
+4. The driver app displays the offer and starts a local countdown.
+5. The driver invokes AcceptRide with the ride ID and an idempotency key.
+6. The backend atomically assigns the ride to the first eligible driver and rejects competing acceptance requests.
+7. The driver app receives the assignment event and opens navigation to pickup.
+8. The passenger app receives the same assignment event and displays driver details.
+
+Domain rules and state transitions:
+- A ride can move from requested to searching, driver_assigned, driver_arriving, driver_waiting, in_progress, and completed.
+- A ride can be cancelled only from states allowed by the cancellation policy.
+- A driver cannot accept a ride that is already assigned or cancelled.
+- A driver cannot start a ride before reaching the pickup area unless an authorized override exists.
+- A driver cannot complete a ride that has not started.
+- A payment must be authorized before a card ride is marked as paid.
+- Repeated commands with the same idempotency key must return the original result.
+- Client timestamps and location data are advisory; the backend controls authoritative transitions.
+
+Data and state model:
+- Screen state is represented with immutable Kotlin data classes containing content, loading flags, validation messages, and recoverable errors.
+- Domain results distinguish success, business rejection, authentication failure, connectivity failure, and unexpected failure.
+- Room stores the active ride snapshot, last known ride status, driver details, route summary, and pending idempotent commands.
+- Realtime events are deduplicated by event ID and applied in sequence order where the backend provides a sequence number.
+- The local database is updated before the UI observes the new active ride state.
+- Remote refreshes reconcile local state instead of blindly replacing newer local pending operations.
+
+Offline and reliability:
+Ride assignment and payment require server confirmation, but the app can still show the last known active trip while offline. Safe read operations use cached Room data. Retryable commands such as cancellation or availability changes are stored with an idempotency key and processed by WorkManager when connectivity returns. Non-retryable failures are surfaced clearly and removed from the pending queue only after the server confirms the final outcome.
+
+Realtime reliability:
+The WebSocket connection uses authentication, heartbeat messages, reconnect backoff, and a maximum retry interval. After reconnecting, the app requests a full active-ride snapshot because events may have been missed. Events are validated, deduplicated, and persisted before being rendered. A stale event must not move a ride backward in its lifecycle.
+
+Scalability:
+The Android client keeps ViewModels small and delegates business behavior to use cases. Paging is used for trip history and support messages. Location updates use adaptive intervals based on driver state to reduce battery usage. The backend scales stateless API instances horizontally, while the matching service partitions work by service region. Realtime updates are distributed through a message broker and keyed by ride ID to preserve ordering for one ride.
+
+Security and privacy:
+- Authentication tokens are stored using encrypted platform storage and never logged.
+- Location permission is requested only when a feature needs it and is explained in context.
+- Background location is enabled only for verified driver workflows and follows platform policy.
+- The app uses TLS for network traffic and certificate validation appropriate for the deployment.
+- Passenger phone numbers are masked and communication uses a controlled contact service where possible.
+- Logs exclude access tokens, payment details, precise location history, and other sensitive personal data.
+- Backend authorization verifies passenger ownership and driver assignment on every ride operation.
+- Analytics events use opaque identifiers and avoid sending unnecessary location or identity data.
+
+Testing strategy:
+- Domain unit tests cover fare validation, cancellation policy, state transitions, idempotency behavior, and driver acceptance races.
+- ViewModel tests verify StateFlow emissions, loading states, validation messages, and one-time effects using coroutine test tools.
+- Repository tests verify DTO mapping, Room synchronization, event deduplication, and retry queue behavior.
+- Compose UI tests verify navigation, semantics, accessibility labels, ride confirmation, and error recovery.
+- Integration tests verify authentication, ride creation, assignment, cancellation, completion, and payment reconciliation.
+- Location and realtime behavior are tested with fake providers and deterministic event streams.
+
+Known trade-offs:
+- Clean Architecture adds interfaces, mappings, and files, but protects domain rules from Android and networking details.
+- MVVM with StateFlow makes UI state observable and testable, but requires discipline around one-time effects and state restoration.
+- Jetpack Compose speeds up state-driven UI development, but careless recomposition can increase map, location, or network work.
+- Room improves offline resilience and startup speed, but local data can become stale and requires reconciliation.
+- WebSockets provide responsive trip updates, but reconnect logic and missed-event recovery increase complexity.
+- Client-side fare previews improve user experience, but the backend must recalculate and authorize the final fare.
+- Adaptive driver location updates reduce battery consumption, but lower update frequency can reduce map precision.
+
+Good interview topics:
+- Explain how Clean Architecture keeps fare and ride lifecycle rules independent of Compose and Retrofit.
+- Describe how a ViewModel exposes immutable StateFlow and one-time effects to a Compose screen.
+- Design the ride state machine and prevent invalid transitions.
+- Explain how two drivers attempting to accept one ride are handled safely.
+- Describe idempotency for ride requests, cancellation, and payment operations.
+- Explain how Room and WorkManager support offline behavior without pretending a ride assignment is confirmed.
+- Design WebSocket reconnect and missed-event recovery for an active trip.
+- Discuss how to collect driver location efficiently without draining the battery.
+- Explain where Hilt modules provide repositories, use cases, API clients, Room databases, and location providers.
+- Compare UI state, saved state, and persistent database state in a Compose application.
+- Describe how to test a Compose screen, its ViewModel, and the underlying use case independently.
+- Discuss how passenger privacy, location permissions, authentication, and payment data should be protected.

@@ -1,0 +1,22 @@
+The user has submitted the following interview question or topic. Validate it first, then respond according to your guidelines.
+
+User input:
+{{user_input}}
+
+---
+
+Steps to follow:
+1. Determine whether the input is a valid interview-related question or topic.
+   - If NOT valid: output the redirection message exactly as instructed in your system prompt. Stop here.
+   - If valid: continue to step 2.
+
+2. Identify the question type: Technical | Behavioral | System Design | Coding | Career/HR
+
+3. Provide a structured answer using the appropriate format:
+   - **Technical**: Concept explanation → Example → Common pitfalls → Key Takeaway
+   - **Behavioral**: Suggested STAR framework → Sample answer → Variations to expect
+   - **System Design**: Clarifying assumptions → High-level design → Deep dives → Trade-offs → Key Takeaway
+   - **Coding**: Approach explanation → Solution code → Complexity analysis → Key Takeaway
+   - **Career/HR**: Direct, honest advice with concrete phrasing tips
+
+4. Optionally suggest 1–2 related follow-up questions the interviewer might ask next.

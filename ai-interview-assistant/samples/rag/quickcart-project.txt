@@ -1,0 +1,71 @@
+Project name: QuickCart Order Platform
+
+Project description:
+QuickCart is an event-driven order processing platform for an e-commerce application. It accepts customer orders, reserves inventory asynchronously, and sends order notifications. The system is designed for high throughput, idempotent order creation, and recovery from temporary downstream failures.
+
+Business requirements:
+- A customer can submit an order through the Web App.
+- The API must reject unauthenticated requests and invalid order payloads.
+- Creating the same order twice with the same idempotency key must not create duplicate orders.
+- Inventory reservation and customer notification may run asynchronously.
+- The order API should respond within 500 ms under normal load.
+- Every important state change must be auditable.
+
+Architecture overview:
+The Web App sends REST requests to the API Gateway. The API Gateway authenticates the user, validates rate limits, and forwards POST /orders to the Order Service. The Order Service owns the order lifecycle and stores order records in PostgreSQL. After committing a new order, the Order Service publishes an OrderCreated event to Kafka. Inventory Service and Notification Service consume that event independently.
+
+Components:
+1. Web App
+   The browser application where customers review their cart and submit an order. It generates a unique idempotency key for every checkout attempt.
+
+2. API Gateway
+   Validates JWT access tokens, applies per-user rate limits, attaches a correlation ID, and routes requests to Order Service. It does not contain order business logic.
+
+3. Order Service
+   Implements POST /orders and GET /orders/{id}. It validates product and quantity data, checks the idempotency key, creates the order, and records an outbox event in the same PostgreSQL transaction.
+
+4. PostgreSQL
+   Stores orders, order items, idempotency keys, and outbox events. The idempotency key has a unique constraint. The order and its outbox event are committed atomically.
+
+5. Kafka
+   Carries OrderCreated events. Events are partitioned by order_id so events for the same order remain ordered. Consumers use independent consumer groups.
+
+6. Inventory Service
+   Consumes OrderCreated, reserves stock, and records processed event IDs to avoid duplicate reservation. If stock is unavailable, it publishes an InventoryReservationFailed event.
+
+7. Notification Service
+   Consumes OrderCreated and sends an order confirmation email. Delivery failures are retried with exponential backoff. Messages that exceed the retry limit are moved to a dead-letter topic.
+
+Order creation sequence:
+1. Web App sends POST /orders with a JWT, cart items, and an Idempotency-Key header.
+2. API Gateway validates the token and forwards the request with a correlation ID.
+3. Order Service checks whether the idempotency key already exists.
+4. If the key exists, Order Service returns the previously created order.
+5. Otherwise, Order Service starts a PostgreSQL transaction.
+6. Order Service inserts the order, order items, idempotency key, and OrderCreated outbox record.
+7. PostgreSQL commits the transaction.
+8. An outbox publisher reads the pending outbox record and publishes OrderCreated to Kafka.
+9. Inventory Service reserves stock.
+10. Notification Service sends the confirmation email.
+
+Reliability and consistency:
+QuickCart uses the transactional outbox pattern to prevent a committed order from being lost before its Kafka event is published. Publishing is at-least-once, so every consumer must be idempotent. Consumers store processed event IDs before applying side effects. Kafka consumer offsets are committed only after successful processing. Failed messages use bounded retries and a dead-letter topic.
+
+Scalability:
+Order Service is stateless and can scale horizontally behind the API Gateway. PostgreSQL uses indexes on customer_id, created_at, status, and idempotency_key. Kafka partitions OrderCreated by order_id. Inventory Service and Notification Service can scale by adding consumers up to the partition count.
+
+Security:
+API Gateway validates JWT tokens and rejects requests without the required checkout scope. Sensitive customer information is not included in Kafka events. Services use TLS in transit and least-privilege database credentials. Logs include correlation IDs but must not include access tokens or payment data.
+
+Known trade-offs:
+- The asynchronous design improves API latency but creates eventual consistency between order, inventory, and notification states.
+- The transactional outbox adds operational complexity but avoids the dual-write problem.
+- At-least-once delivery improves reliability but requires idempotent consumers.
+- PostgreSQL is the source of truth for orders; Kafka is the integration event stream, not the authoritative order database.
+
+Good interview topics:
+- Explain why QuickCart uses a transactional outbox instead of writing to PostgreSQL and Kafka independently.
+- Design idempotency for POST /orders and Kafka consumers.
+- Explain how the system behaves when Kafka is temporarily unavailable.
+- Describe how to preserve event ordering for one order while scaling consumers.
+- Discuss eventual consistency and how the UI should display an order whose inventory reservation is still pending.
